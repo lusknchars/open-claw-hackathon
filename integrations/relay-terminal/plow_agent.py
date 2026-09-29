@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import hashlib
 import http.client
 import json
+import shlex
 import os
 from pathlib import Path
 import re
@@ -38,8 +39,8 @@ CLIENT_COMMIT = '8ce907e220ab67018d6857e8054a41eed4ecd279'
 CLIENT_SHA256 = 'f69dd0eae74d82f6d9b56b66389c942df35de2665f6d8c92a62ed7b26af223aa'
 CLIENT_URL = f'https://raw.githubusercontent.com/plow-pbc/plow-agents/{CLIENT_COMMIT}/bin/plow-agents'
 ORIGIN = 'https://api.plow.co'
-READY = 'plow-init: configured'
-PARKED = 'parking; no gateway will start'
+READY = '[plow] connected account=chat'  # the OpenClaw base's Plow channel is up and listening
+PARKED = 'plow-boot: parked'
 CONTAINER_PATH = '/command:/usr/local/bin:/usr/bin:/bin'
 FIRST_PROMPT = 'Reply in one short sentence: say who you are and what you can do with meeting notes.'
 CONFIG_PATH = '/var/lib/hermes/config.yaml'
@@ -848,7 +849,7 @@ def identity(path):
 
 
 def reporter_state():
-    result = compose('exec', '-T', 'agent', 'cat', '/var/lib/hermes/.agent-index.json', capture=True)
+    result = compose('exec', '-T', 'agent', 'cat', '/var/lib/plow/.agent-index/.agent-index.json', capture=True)
     try:
         return json.loads(result.stdout) if result.returncode == 0 else {}
     except ValueError:
@@ -895,12 +896,14 @@ def ask_for_line(options, command=None):
 
 def speak(prompt):
     """One prompt through the container's own environment, as the agent user."""
-    result = compose('exec', '-T', '-e', 'PATH=' + CONTAINER_PATH, 'agent', 'with-contenv', 'sh', '-c',
-                     'export HOME=/var/lib/hermes; cd /opt/hermes; exec s6-setuidgid hermes '
-                     "/opt/hermes/.venv/bin/hermes chat -q " + json.dumps(prompt) + ' --oneshot -Q', capture=True)
+    # A login shell loads the gateway password the base writes for local CLI calls. Its own session, so a
+    # check never lands in the owner's conversation.
+    result = compose('exec', '-T', 'agent', 'bash', '-lc',
+                     'exec openclaw agent --agent main --session-id relay-cli-check -m ' + shlex.quote(prompt),
+                     capture=True)
     if result.returncode:
         raise AgentError('The agent is running but did not answer. Check `docker compose logs agent` in agent/.')
-    return '\n'.join(text for text in result.stdout.splitlines() if not text.startswith('session_id:')).strip()
+    return result.stdout.strip()
 
 
 def status_line(label, value):
@@ -2031,10 +2034,12 @@ def run_agent(args):
             compose('stop')
             print('Stopped. Memory, install identity and reporting state are kept.', flush=True)
             return 0
-        if action == 'model':
-            return model_command(args)
-        if action == 'provider':
-            return provider_command(args)
+        if action in ('model', 'provider'):
+            # ponytail: the model/provider switcher edits Hermes' config.yaml, which the OpenClaw base does not
+            # have; there the Plow provider and model are set by the base. The code below stays for a later
+            # OpenClaw version of this command.
+            raise AgentError('This agent runs on the Plow OpenClaw base, which sets the model through Plow. '
+                             f'`{relay_command()} agent {action}` is not available on it yet.')
         state = ROOT / '.data/agent'
         state.mkdir(parents=True, exist_ok=True)
         with exit_on_sigterm(), installation_lock(state / 'install.lock'):

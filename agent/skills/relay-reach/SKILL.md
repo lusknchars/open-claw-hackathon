@@ -5,8 +5,8 @@ description: Save meeting action items or todos, list work by owner or date, cor
 
 # Reach
 
-Use `python3 /opt/hermes/skills/relay-reach/scripts/tasks.py --help` for commands.
-The script persists work in this installation's Hermes home. Its output is the
+Use `python3 /opt/plow/skills/relay-reach/scripts/tasks.py --help` for commands.
+The script persists work in this installation's home. Its output is the
 receipt for a save; finish only after checking the exit status and returned IDs.
 
 ## Intake

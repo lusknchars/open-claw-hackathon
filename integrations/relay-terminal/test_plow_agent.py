@@ -146,7 +146,7 @@ class Installation:
         self.up = SimpleNamespace(returncode=0)  # `compose up` result, or an exception to raise
         self.docker = FakeDocker()  # read-only docker state; any other docker command fails the test
         self.terminal = False  # whether stdin is a terminal the installer may ask on
-        self.logs = 'plow-init: configured from /var/lib/plow as cht_1\n'  # what `compose logs` shows
+        self.logs = '[plow] connected account=chat\n'  # what `compose logs` shows
         self.reply = 'I am Reach.'  # speak()'s answer, or an exception to raise
         # Whatever host this runs on, the installer makes files private; on Windows that is an
         # icacls call, and this harness owns subprocess.run. A Windows test replaces this fake
@@ -517,17 +517,17 @@ class CredentialTests(unittest.TestCase):
 class ReadinessTests(unittest.TestCase):
     def test_configured_message_reports_ready(self):
         state, detail = plow_agent.wait_ready(
-            lambda: 'starting\nplow-init: configured from /var/lib/plow as cht_1\n',
+            lambda: 'starting\n[plow] connected account=chat\n',
             sleep=lambda seconds: None, timeout=10)
         self.assertEqual(state, 'ready')
-        self.assertIn('cht_1', detail)
+        self.assertIn('connected account=chat', detail)
 
     def test_parked_message_reports_its_reason(self):
         state, detail = plow_agent.wait_ready(
-            lambda: 'plow-init: credential rejected -- parking; no gateway will start\n',
+            lambda: 'plow-boot: parked: Identity request refused: HTTP 401\n',
             sleep=lambda seconds: None, timeout=10)
         self.assertEqual(state, 'parked')
-        self.assertIn('credential rejected', detail)
+        self.assertIn('HTTP 401', detail)
 
     def test_silence_times_out_with_bounded_waiting(self):
         slept = []
@@ -1238,12 +1238,12 @@ class SignInTests(unittest.TestCase):
     def test_a_sign_in_is_kept_when_the_agent_never_reports_ready(self):
         with tempfile.TemporaryDirectory() as directory:
             install = Installation(directory)
-            install.logs = 'plow-init: credential rejected -- parking; no gateway will start\n'
+            install.logs = 'plow-boot: parked: Identity request refused: HTTP 401\n'
             self.assertEqual(install.run(), 1)
             self.assertIn('login', install.calls)
             self.assertTrue(install.signin.exists())
             self.assertTrue(self.marker(install).exists())
-        self.assertIn('parking; no gateway will start', install.err.getvalue())
+        self.assertIn('plow-boot: parked', install.err.getvalue())
         self.assertNotIn('Sign-in .....', install.out.getvalue())
 
     def test_a_sign_in_is_kept_when_hermes_does_not_answer(self):

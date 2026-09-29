@@ -5,8 +5,8 @@ description: Find out what this person wants connected and what their own comput
 
 # Setup
 
-Use `python3 /opt/hermes/skills/relay-setup/scripts/setup.py --help` for commands.
-The record lives in this installation's Hermes home. Its output is the receipt
+Use `python3 /opt/plow/skills/relay-setup/scripts/setup.py --help` for commands.
+The record lives in this installation's home. Its output is the receipt
 for a save; only a zero exit means the answer was kept.
 
 ## Read the record before asking
