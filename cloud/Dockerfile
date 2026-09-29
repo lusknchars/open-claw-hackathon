@@ -1,14 +1,20 @@
-FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-ef0019372ff8bca593611b31ebd2e08f9f1458ff@sha256:a8a2f97ad78b8192d80a984dce81d3bf5a9a883d18cb7b677704913a09b56aee
+# Repro Relay on the Plow OpenClaw base. Pinned by digest: this is base-771198a9
+# of plow-pbc/plow-openclaw-agent.
+FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-771198a9609dcef54d44843e7da5329c17fa51b4@sha256:f1e7c421b97a80f1bd17015f96daceb965f350a241f7edc7e4d856a0e3a6f8f5
 LABEL org.opencontainers.image.title="Repro Relay" \
       org.opencontainers.image.source="https://github.com/lusknchars/repro-relay" \
       org.opencontainers.image.licenses="MIT"
 ENV AGENT_ID=repro-relay
-COPY --chmod=0644 agent/runtime/persona.md /opt/hermes/plow-seed/persona.md
-COPY agent/skills/ /opt/hermes/skills/
+# The skill scripts keep their records under HERMES_HOME (the name predates the
+# port); point it into the base's persistent state volume.
+ENV HERMES_HOME=/var/lib/plow/relay
+USER root
+# The persona goes after the base prompt, so the base's Plow chat rules stay.
+COPY agent/runtime/persona.md /tmp/persona.md
+RUN printf '\n' >> /opt/plow/prompt/AGENTS.md \
+ && cat /tmp/persona.md >> /opt/plow/prompt/AGENTS.md && rm /tmp/persona.md
+COPY agent/skills/ /opt/plow/skills/
 COPY agent/LICENSE agent/NOTICE /usr/share/doc/repro-relay/
 COPY agent/vendor/ /usr/share/doc/repro-relay/vendor/
-RUN set -eu; \
-    find /opt/hermes/skills -type d -exec chmod 0755 {} +; \
-    find /opt/hermes/skills -type f -exec chmod 0644 {} +
-COPY agent/image/s6-overlay/ /etc/s6-overlay/
-RUN chmod 0755 /etc/s6-overlay/s6-rc.d/transport-watchdog/run
+RUN chmod -R a+rX /opt/plow/skills
+USER node

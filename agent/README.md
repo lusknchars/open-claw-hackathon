@@ -1,6 +1,6 @@
 # Repro Relay for Plow
 
-Run Repro Relay as a Hermes agent on your own Plow line. Paste meeting notes or
+Run Repro Relay as an OpenClaw agent on your own Plow line. Paste meeting notes or
 send a todo. Reach saves action items with source quotes, owners and deadlines,
 answers daily-work questions, and records completion reports across restarts.
 
@@ -17,7 +17,7 @@ From a copy of this repository, in its top folder:
 ./relay agent
 ```
 
-It checks Docker, signs you in to Plow, selects a free assistant line, starts this agent, waits until Plow reports it configured, prints a first Hermes reply, and shows the number to text. Repeating it continues an interrupted install. It never takes a line that already answers as an agent, and never overwrites an existing credential.
+It checks Docker, signs you in to Plow, selects a free assistant line, starts this agent, waits until Plow reports it configured, prints a first reply, and shows the number to text. Repeating it continues an interrupted install. It never takes a line that already answers as an agent, and never overwrites an existing credential.
 
 Needs Docker Desktop running, Python 3, and the phone that owns the Plow account. The pinned upstream image is Linux amd64; Docker Desktop emulates it on Apple Silicon, so the first start downloads several GB.
 
@@ -26,11 +26,10 @@ Needs Docker Desktop running, Python 3, and the phone that owns the Plow account
 ./relay agent status              # agent, line, Plow setup and reported usage
 ./relay agent test "prompt"       # one prompt, printed with its token usage
 ./relay agent stop                # stop it, keeping memory and identity
-./relay agent model               # the current default model, its provider and known ids
-./relay agent model <id>          # switch the default model, backing up the config first
-./relay agent model <id> --check  # after switching, ask the agent one prompt to confirm the id (spends credits)
-./relay agent model --revert      # restore the config from the newest backup and restart
 ```
+
+The agent runs on the Plow OpenClaw base, which sets its model through Plow, so
+`./relay agent model` and `./relay agent provider` are not available on it yet.
 
 ### The same steps by hand
 
@@ -49,7 +48,7 @@ Select a **free** line from the list and replace `ln_xxx`. An occupied line alre
 agent: keep it running and use a different free line. With none, run `login --new-line`,
 complete its phone confirmation, then run `lines` again.
 
-Wait for `plow-init: configured` in the logs. Text the selected line:
+Wait for `[plow] connected account=chat` in the logs. Text the selected line:
 
 > Meeting notes: Ana will review the export bug by September 18, 2026. Bruno
 > will document setup by September 19, 2026. Save these tasks, then show Ana's work.
@@ -71,72 +70,28 @@ Its random installation ID and report key persist in the named home volume.
 The reporter registers this installation under `repro-relay` using your own Plow
 authorization. It does not make you the publisher of someone else's listing.
 
-The client establishes a baseline and can recover same-day Hermes session usage
+The client establishes a baseline and can recover same-day OpenClaw session usage
 when available. An idle agent may show measurement pending until it does work.
 Do not repeatedly recreate volumes to increase install counts.
 
 Check the client without posting a report:
 
 ```sh
-docker compose exec --user hermes agent /opt/hermes/.venv/bin/python3 \
-  /opt/plow/agent-index-client.py status
-docker compose exec --user hermes agent /opt/hermes/.venv/bin/python3 \
-  /opt/plow/agent-index-client.py --agent repro-relay --dry-run
+docker compose exec agent env -u HERMES_HOME HOME=/var/lib/plow \
+  python3 /opt/plow/agent-index-client.py status
+docker compose exec agent env -u HERMES_HOME HOME=/var/lib/plow \
+  python3 /opt/plow/agent-index-client.py --agent repro-relay --dry-run
 ```
 
-Reporting ships in the Plow base image as its `agent-index` s6 service, so it
-is part of this image's behavior.
+Reporting ships in the Plow base image, which runs it from its own boot, so it
+is part of this image's behavior. The first pass after a fresh install reports
+nothing until the agent has answered once.
 
-## Transport watchdog
+## Staying connected
 
-The image also runs `transport-watchdog`, an s6 service that checks once a
-minute that the agent can still receive messages, and that it can still reach
-the owner's Mac.
-
-For messages, it reads the gateway's own record of its Plow chat and email
-connections. When a connection has stopped reporting for six minutes, it
-restarts only the gateway. A restart that works is silent. After three restarts
-that do not bring the connection back, it sends one text to the owner chat that
-`plow-init` configures, over the same REST API the agent replies through, and
-stops restarting until the connection returns.
-
-The Mac tools are watched the same way. The agent reaches the Mac through Latch,
-as an MCP server the gateway connects to, and nothing records that session in a
-state file: when it drops, the tools simply vanish and the agent answers as
-though it never had hands. So the watchdog reads the end of the gateway's own
-log, `/var/lib/hermes/logs/agent.log`, for the last state change that logger
-wrote about the server, and believes only lines with that logger's exact shape.
-When the session has been anything but connected for six minutes, it asks Latch
-itself for one MCP handshake, once a minute for as long as the session stays
-unhealthy, and the answer decides what happens:
-
-- **Latch answers.** The session is stuck inside the gateway, so the gateway is
-  restarted, verified and, after three failed recoveries, texted about, exactly
-  as a lost message transport is.
-- **Latch does not answer.** The Mac is asleep, offline, or Latch is closed. No
-  restart here can reach it, so it sends one text saying so and nothing further
-  until the session comes back.
-
-The two are watched separately, each with its own failures and its own text, so
-neither can silence the other. They share one rule: the gateway is restarted at
-most once every ten minutes, whichever of them asks, because one restart serves
-both. Watching the Mac session needs `PLOW_MCP_URL`; without it messages are
-still watched and the log says so once at startup.
-
-It runs as root, because restarting a service needs s6's control files, and it
-reads the agent token to send those texts and to ask Latch. The token goes only
-to an `https://` endpoint, never through a proxy or a redirect. Neither it nor
-the Latch url, which names the device, is ever logged. Without a token or an
-owner chat it stands down. See what it has done:
-
-```sh
-docker compose logs agent | grep transport-watchdog:
-```
-
-To build without it, delete `image/s6-overlay/s6-rc.d/transport-watchdog`, its
-entry in `image/s6-overlay/s6-rc.d/user/contents.d/`, its path in the
-`cloud/Dockerfile`'s `chmod` line, the image check in `.github/workflows/agent.yml`, and
-`tests/test_watchdog.py`.
+The OpenClaw base reconnects the Plow chat socket with backoff when it drops,
+and restarts its bridge to the owner's Mac if that bridge crashes, so this
+image carries no watchdog of its own.
 
 ## Restart and update
 
@@ -145,7 +100,7 @@ identity. `docker compose up -d` starts it again. After pulling an update, use
 `docker compose up --build -d`. Keep the same checkout directory or Compose
 project name so the named volume remains the same.
 
-`docker compose down -v` permanently deletes this install's tasks, Hermes
+`docker compose down -v` permanently deletes this install's tasks, conversation
 history and reporting identity. Use it only when intentionally removing data.
 Credentials live in `agent/plow-credentials`, outside Git and the build context.
 The bind mount refuses a missing file instead of silently creating a directory.
